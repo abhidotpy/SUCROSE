@@ -1,46 +1,120 @@
-module verlet_integrator
+module verlet
     use system
+    use constraints
     implicit none
 
     contains
     subroutine vv_initial_step( DT )
         implicit none
         real(real64), intent(in) :: DT
+        real(real64)             :: rx_pbc, ry_pbc, rz_pbc
+        integer                  :: I
 
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
 
-        RX = RX + DT * VX
-        RY = RY + DT * VY
-        RZ = RZ + DT * VZ
+        do I = 1, N
+                
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
 
-        if (is_periodic) then
-            RX = RX - ANINT( RX / box_length(1) ) * box_length(1)
-            RY = RY - ANINT( RY / box_length(2) ) * box_length(2)
-            RZ = RZ - ANINT( RZ / box_length(3) ) * box_length(3)
-        endif
+            RX(I) = RX(I) + DT * VX(I)
+            RY(I) = RY(I) + DT * VY(I)
+            RZ(I) = RZ(I) + DT * VZ(I)
+
+            RX_PBC = RX(I) - ANINT( RX(I) / box(1) ) * box(1)
+            RY_PBC = RY(I) - ANINT( RY(I) / box(2) ) * box(2)
+            RZ_PBC = RZ(I) - ANINT( RZ(I) / box(3) ) * box(3)
+            
+            RX(I) = MERGE( RX_PBC, RX(I), periodic )
+            RY(I) = MERGE( RY_PBC, RY(I), periodic )
+            RZ(I) = MERGE( RZ_PBC, RZ(I), periodic )
+
+        enddo
 
     end subroutine vv_initial_step
 
     subroutine vv_final_step( DT )
         implicit none
         real(real64), intent(in) :: DT
+        integer                  :: I
 
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
+        kin_eng = 0.0
+
+        do I = 1, N
+
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
+
+            kin_eng = kin_eng + 0.5 * mass(I) * ( VX(I) * VX(I) + VY(I) * VY(I) + VZ(I) * VZ(I) )
+
+        enddo
 
     end subroutine vv_final_step
 
-end module verlet_integrator
+    subroutine vvc_initial_step( DT )
+        implicit none
+        real(real64), intent(in) :: DT
+        real(real64)             :: rx_pbc, ry_pbc, rz_pbc
+        integer                  :: I
 
-module quaternion_integrator
+        do I = 1, N
+                
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
+
+            RX_old(I) = RX(I)
+            RY_old(I) = RY(I)
+            RZ_old(I) = RZ(I)
+
+            RX(I) = RX(I) + DT * VX(I)
+            RY(I) = RY(I) + DT * VY(I)
+            RZ(I) = RZ(I) + DT * VZ(I)
+
+            RX_PBC = RX(I) - ANINT( RX(I) / box(1) ) * box(1)
+            RY_PBC = RY(I) - ANINT( RY(I) / box(2) ) * box(2)
+            RZ_PBC = RZ(I) - ANINT( RZ(I) / box(3) ) * box(3)
+            
+            RX(I) = MERGE( RX_PBC, RX(I), periodic )
+            RY(I) = MERGE( RY_PBC, RY(I), periodic )
+            RZ(I) = MERGE( RZ_PBC, RZ(I), periodic )
+
+        enddo
+
+        call apply_constraints_a( DT )
+
+    end subroutine vvc_initial_step
+
+    subroutine vvc_final_step( DT )
+        implicit none
+        real(real64), intent(in) :: DT
+        integer                  :: I
+
+        kin_eng = 0.0
+
+        do I = 1, N
+
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
+
+            kin_eng = kin_eng + 0.5 * mass(I) * ( VX(I) * VX(I) + VY(I) * VY(I) + VZ(I) * VZ(I) )
+
+        enddo
+
+        call apply_constraints_b( DT )
+
+    end subroutine vvc_final_step
+
+end module verlet
+
+module quaternion
     use xmath
     use system
     implicit none
 
-    real(real64), dimension(3, 3), private :: RM
+    real(real64), private :: RM(3, 3)
     real(real64), private :: QDW, QDX, QDY, QDZ
     real(real64), private :: LX_body, LY_body, LZ_body
     real(real64), private :: WX_body, WY_body, WZ_body
@@ -49,12 +123,13 @@ module quaternion_integrator
     subroutine qq_initial_step( DT )
         implicit none
         real(real64), intent(in) :: DT
-        real(real64) :: QW_Old, QX_Old, QY_Old, QZ_Old
-        real(real64) :: QW_New, QX_New, QY_New, QZ_New
-        real(real64) :: Q_mag
-        integer :: I, J
+        real(real64)             :: QW_Old, QX_Old, QY_Old, QZ_Old
+        real(real64)             :: QW_New, QX_New, QY_New, QZ_New
+        real(real64)             :: Q_mag
+        integer                  :: I, J
 
         do I = 1, N
+            
             QW_New = QW(I); QX_New = QX(I)
             QY_New = QY(I); QZ_New = QZ(I)
 
@@ -110,7 +185,9 @@ module quaternion_integrator
     subroutine qq_final_step( DT )
         implicit none
         real(real64), intent(in) :: DT
-        integer :: I
+        integer                  :: I
+
+        kin_rot = 0.0
 
         do I = 1, N
 
@@ -132,37 +209,80 @@ module quaternion_integrator
             LY_body = ( RM(2,1) * LX(I) + RM(2,2) * LY(I) + RM(2,3) * LZ(I) )
             LZ_body = ( RM(3,1) * LX(I) + RM(3,2) * LY(I) + RM(3,3) * LZ(I) )
 
-            kinetic_energy = kinetic_energy + 0.5 * ( ( LX_body ** 2.0) * Ixx_inv(I) + &
-                                                      ( LY_body ** 2.0) * Iyy_inv(I) + &
-                                                      ( LZ_body ** 2.0) * Izz_inv(I) )
+            kin_rot = kin_rot + 0.5 * ( ( LX_body ** 2.0) * Ixx_inv(I) + &
+                                        ( LY_body ** 2.0) * Iyy_inv(I) + &
+                                        ( LZ_body ** 2.0) * Izz_inv(I) )
 
         enddo
 
     end subroutine qq_final_step
 
-end module quaternion_integrator
+end module quaternion
 
 module nose_hoover
     use system
+    use constraints
     implicit none
 
-    integer, parameter            :: N_th = 2
-    real(real64)                  :: tau = 5.0
+    integer, parameter            :: N_th = 3
+    real(real64), parameter       :: tau = 2.0
+    real(real64)                  :: n_dof
     real(real64), dimension(N_th) :: HB = 1.0, eta = 0.0, p_eta = 0.0
 
     contains
-    SUBROUTINE u4_propagator ( t, j_start, j_stop, j_stride )
+    pure function polyval ( x, c ) RESULT ( f )
         implicit none
-        real(real64), intent(in)  :: t               
-        integer, intent(in)       :: j_start, j_stop
+        real(real64),                intent(in) :: x ! argument
+        real(real64), dimension(0:), intent(in) :: c ! given coefficients (ascending powers of x)
+        real(real64)                            :: f ! Returns polynomial in ...
+        integer                                 :: i, upper
 
-        integer :: j, j_stride
-        real(real64) :: gj, x, c
+        ! Uses Horner's rule
 
+        upper = UBOUND(c,1)
+        f = c(upper)
+
+        do i = upper - 1, 0, -1
+            f = f * x + c(i)
+        enddo
+
+    end function polyval
+
+    pure function exprel ( x ) RESULT ( f )
+        implicit none
+        real(real64), intent(in) :: x ! Argument
+        real(real64)             :: f ! Returns value of (exp(x)-1)/x
+
+        ! At small x, we must guard against the ratio of imprecise small values.
+        ! There are various ways of doing this.
+        ! We follow some others and use the identity: (exp(x)-1)/x = exp(x/2)*[sinh(x/2)/(x/2)].
+        ! For small x, sinh(x)/x = g0 + g1*x**2 + g2*x**4 + ...
+        ! where the coefficient of x**(2n) is gn = 1/(2*n+1)!
+        ! Alternatively, the exprel function is available in some math and scientific libraries.
+
+        real(real64), dimension(0:4), parameter :: g = 1.0 / [1,6,120,5040,362880]
+        real(real64),                 parameter :: tol = 0.01
+
+        if ( abs(x) > tol ) then
+            f = ( exp(x) - 1.0 ) / x
+        else
+            f = exp(x/2) * polyval ( (x/2)**2, g )
+        endif
+
+    end function exprel
+
+    subroutine u4_propagator ( t, j_start, j_stop, j_stride )
+        implicit none
+        real(real64), intent(in)    :: t               
+        integer, intent(in)         :: j_start, j_stop
+        integer                     :: j, j_stride
+        real(real64)                :: gj, x, c
+
+        n_dof = 3 * ( N / Nrigid ) - 3
         do j = j_start, j_stop, j_stride
 
             if ( j == 1 ) then
-                gj = SUM(VX**2 + VY**2 + VZ**2) - (dof-3*N) * target_temp
+                gj = SUM( mass * ( VX ** 2 + VY ** 2 + VZ ** 2 ) ) - n_dof * target_temp
             else
                 gj = ( p_eta(j-1)**2 / HB(j-1) ) - target_temp
             endif
@@ -182,96 +302,221 @@ module nose_hoover
 
     subroutine nht_initial_step( DT, coupling )
         implicit none
-        real(real64), intent(in) :: DT
+        real(real64),           intent(in) :: DT
         real(real64), optional, intent(in) :: coupling
 
-        if (target_temp_set == .FALSE.) then
+        real(real64)    :: rx_pbc, ry_pbc, rz_pbc
+        integer         :: I
+
+        if ( .not. target_temp_set ) then
             write(*, "(1x, 'Error: Target temperature not set.')")
             stop
         endif
 
+        n_dof = 3 * ( N / Nrigid ) - 3
         if (present(coupling)) then
             HB = coupling
         else
-            HB = 1.0
+            HB = target_temp * tau ** 2.0
+            HB(1) = n_dof * target_temp * tau ** 2.0
         endif
 
-        call u4_propagator( DT / 4.0, N_th, 1, -1)
+        do I = 1, N
 
-        VX = VX * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VY = VY * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VZ = VZ * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            call u4_propagator( DT / 4.0, N_th, 1, -1)
 
-        eta = eta + 0.5 * DT * p_eta / HB
+            VX(I) = VX(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VY(I) = VY(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VZ(I) = VZ(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
 
-        CALL u4_propagator( DT / 4.0, 1, N_th, 1)
+            eta = eta + 0.5 * DT * p_eta / HB
 
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
+            CALL u4_propagator( DT / 4.0, 1, N_th, 1)
 
-        RX = RX + DT * VX
-        RY = RY + DT * VY
-        RZ = RZ + DT * VZ
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
 
-        if (is_periodic) then
-            RX = RX - ANINT( RX / box_length(1) ) * box_length(1)
-            RY = RY - ANINT( RY / box_length(2) ) * box_length(2)
-            RZ = RZ - ANINT( RZ / box_length(3) ) * box_length(3)
-        endif
+            RX(I) = RX(I) + DT * VX(I)
+            RY(I) = RY(I) + DT * VY(I)
+            RZ(I) = RZ(I) + DT * VZ(I)
+
+            RX_PBC = RX(I) - ANINT( RX(I) / box(1) ) * box(1)
+            RY_PBC = RY(I) - ANINT( RY(I) / box(2) ) * box(2)
+            RZ_PBC = RZ(I) - ANINT( RZ(I) / box(3) ) * box(3)
+
+            RX(I) = MERGE( RX_PBC, RX(I), periodic )
+            RY(I) = MERGE( RY_PBC, RY(I), periodic )
+            RZ(I) = MERGE( RZ_PBC, RZ(I), periodic )
+
+        enddo
 
     end subroutine nht_initial_step
 
     subroutine nht_final_step( DT, coupling )
         implicit none
-        real(real64), intent(in) :: DT
+        real(real64),           intent(in) :: DT
         real(real64), optional, intent(in) :: coupling
+        integer                            :: I
 
+        n_dof = 3 * ( N / Nrigid ) - 3
         if (present(coupling)) then
             HB = coupling
         else
-            HB = 1.0
+            HB = target_temp * tau ** 2.0
+            HB(1) = n_dof * target_temp * tau ** 2.0
         endif
 
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
+        kin_eng = 0.0
 
-        call u4_propagator( DT / 4.0, N_th, 1, -1)
+        do I = 1, N
 
-        VX = VX * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VY = VY * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VZ = VZ * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
+            
+            call u4_propagator( DT / 4.0, N_th, 1, -1)
+            
+            VX(I) = VX(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VY(I) = VY(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VZ(I) = VZ(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            
+            eta = eta + 0.5 * DT * p_eta / HB
+            
+            CALL u4_propagator( DT / 4.0, 1, N_th, 1)
 
-        eta = eta + 0.5 * DT * p_eta / HB
+            kin_eng = kin_eng + 0.5 * mass(I) * ( VX(I) * VX(I) + VY(I) * VY(I) + VZ(I) * VZ(I) )
 
-        CALL u4_propagator( DT / 4.0, 1, N_th, 1)
+        enddo
 
     end subroutine nht_final_step
 
+    subroutine nhtc_initial_step( DT, coupling )
+        implicit none
+        real(real64), intent(in) :: DT
+        real(real64), optional, intent(in) :: coupling
+        real(real64)    :: rx_pbc, ry_pbc, rz_pbc
+        integer         :: I
+
+        if ( .not. target_temp_set ) then
+            write(*, "(1x, 'Error: Target temperature not set.')")
+            stop
+        endif
+
+        n_dof = 3 * ( N / Nrigid ) - 3
+        if (present(coupling)) then
+            HB = coupling
+        else
+            HB = target_temp * tau ** 2.0
+            HB(1) = n_dof * target_temp * tau ** 2.0
+        endif
+
+        do I = 1, N
+
+            call u4_propagator( DT / 4.0, N_th, 1, -1)
+
+            VX(I) = VX(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VY(I) = VY(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VZ(I) = VZ(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+
+            eta = eta + 0.5 * DT * p_eta / HB
+
+            CALL u4_propagator( DT / 4.0, 1, N_th, 1)
+
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
+
+            RX_old(I) = RX(I)
+            RY_old(I) = RY(I)
+            RZ_old(I) = RZ(I)
+
+            RX(I) = RX(I) + DT * VX(I)
+            RY(I) = RY(I) + DT * VY(I)
+            RZ(I) = RZ(I) + DT * VZ(I)
+
+            RX_PBC = RX(I) - ANINT( RX(I) / box(1) ) * box(1)
+            RY_PBC = RY(I) - ANINT( RY(I) / box(2) ) * box(2)
+            RZ_PBC = RZ(I) - ANINT( RZ(I) / box(3) ) * box(3)
+
+            RX(I) = MERGE( RX_PBC, RX(I), periodic )
+            RY(I) = MERGE( RY_PBC, RY(I), periodic )
+            RZ(I) = MERGE( RZ_PBC, RZ(I), periodic )
+
+        enddo
+
+        call apply_constraints_a( DT )
+
+    end subroutine nhtc_initial_step
+
+    subroutine nhtc_final_step( DT, coupling )
+        implicit none
+        real(real64), intent(in) :: DT
+        real(real64), optional, intent(in) :: coupling
+        integer         :: I
+
+        n_dof = 3 * ( N / Nrigid ) - 3
+        if (present(coupling)) then
+            HB = coupling
+        else
+            HB = target_temp * tau ** 2.0
+            HB(1) = n_dof * target_temp * tau ** 2.0
+        endif
+
+        kin_eng = 0.0
+
+        do I = 1, N
+
+            VX(I) = VX(I) + 0.5 * DT * ( FX(I) * inv_mass(I) )
+            VY(I) = VY(I) + 0.5 * DT * ( FY(I) * inv_mass(I) )
+            VZ(I) = VZ(I) + 0.5 * DT * ( FZ(I) * inv_mass(I) )
+            
+            call u4_propagator( DT / 4.0, N_th, 1, -1)
+            
+            VX(I) = VX(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VY(I) = VY(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            VZ(I) = VZ(I) * EXP( -0.5 * DT * p_eta(1) / HB(1) )
+            
+            eta = eta + 0.5 * DT * p_eta / HB
+            
+            CALL u4_propagator( DT / 4.0, 1, N_th, 1)
+
+            kin_eng = kin_eng + 0.5 * mass(I) * ( VX(I) * VX(I) + VY(I) * VY(I) + VZ(I) * VZ(I) )
+
+        enddo
+
+        call apply_constraints_b( DT )
+
+    end subroutine nhtc_final_step
+
 end module nose_hoover
 
-module langevin_integrator
+module langevin
+    use philox_rng
     use system
+    use constraints
     implicit none
-    real(real64), dimension(3, 3), private   :: RM
-    real(real64), dimension(3)               :: noise1, noise2
-    real(real64), private                    :: QDW, QDX, QDY, QDZ
-    real(real64), private                    :: LX_body, LY_body, LZ_body
-    real(real64), private                    :: WX_body, WY_body, WZ_body
-    real(real64)                             :: kk1, kk2, damp = 1.0
+    real(real64), private :: RM(3, 3)
+    real(real64), private :: noise_1x, noise_1y, noise_1z, noise_2x, noise_2y, noise_2z
+    real(real64), private :: QDW, QDX, QDY, QDZ
+    real(real64), private :: LX_body, LY_body, LZ_body
+    real(real64), private :: WX_body, WY_body, WZ_body
+    real(real64)          :: kk1, kk2, damp = 1.0
     
     contains
-    subroutine lgv_initial_step( DT, damping )
+    subroutine lgv_initial_step( DT, step, damping )
         implicit none
         real(real64), optional, intent(in)  :: damping
         real(real64), intent(in)            :: DT
-        real(real64)                        :: QW_Old, QX_Old, QY_Old, QZ_Old
-        real(real64)                        :: QW_New, QX_New, QY_New, QZ_New
-        real(real64)                        :: Q_mag
-        integer                             :: I, J
+        integer, intent(in)                 :: step
 
-        if (target_temp_set == .FALSE.) then
+        real(real64)    :: RX_PBC, RY_PBC, RZ_PBC
+        real(real64)    :: QW_Old, QX_Old, QY_Old, QZ_Old
+        real(real64)    :: QW_New, QX_New, QY_New, QZ_New
+        real(real64)    :: Q_mag
+        integer         :: I, J, temp_int
+
+        if ( .not. target_temp_set ) then
             write(*, "(1x, 'Error: Target temperature not set.')")
             stop
         endif
@@ -284,6 +529,9 @@ module langevin_integrator
 
         kk1 = 1.0 - (damp * DT) / 2.0
         kk2 = 1.0 / (1.0 + (damp * DT) / 2.0)
+        temp_int = int( target_temp * 1000.0 )
+        noise_1x = 0.0; noise_1y = 0.0; noise_1z = 0.0
+        noise_2x = 0.0; noise_2y = 0.0; noise_2z = 0.0
 
         do I = 1, N
 
@@ -295,21 +543,24 @@ module langevin_integrator
             RY(I) = RY(I) + 0.5 * DT * VY(I)
             RZ(I) = RZ(I) + 0.5 * DT * VZ(I)
 
-            call normal_sequences( 3, noise1, noise2 )
+            call philox_normal_3seq( I, step, temp_int, 0, noise_1x, noise_1y, noise_1z )
+            call philox_normal_3seq( I, step, temp_int, 1, noise_2x, noise_2y, noise_2z )
 
-            VX(I) = EXP( -damp * DT ) * VX(I) + sqrt( target_temp * ( 1 - EXP( -2.0 * damp * DT ))) * noise1(1)
-            VY(I) = EXP( -damp * DT ) * VY(I) + sqrt( target_temp * ( 1 - EXP( -2.0 * damp * DT ))) * noise1(2)
-            VZ(I) = EXP( -damp * DT ) * VZ(I) + sqrt( target_temp * ( 1 - EXP( -2.0 * damp * DT ))) * noise1(3)
+            VX(I) = EXP( -damp * DT ) * VX(I) + sqrt( target_temp * inv_mass(I) * ( 1 - EXP( -2.0 * damp * DT ))) * noise_1x
+            VY(I) = EXP( -damp * DT ) * VY(I) + sqrt( target_temp * inv_mass(I) * ( 1 - EXP( -2.0 * damp * DT ))) * noise_1y
+            VZ(I) = EXP( -damp * DT ) * VZ(I) + sqrt( target_temp * inv_mass(I) * ( 1 - EXP( -2.0 * damp * DT ))) * noise_1z
 
             RX(I) = RX(I) + 0.5 * DT * VX(I)
             RY(I) = RY(I) + 0.5 * DT * VY(I)
             RZ(I) = RZ(I) + 0.5 * DT * VZ(I)
 
-            if (is_periodic) then
-                RX = RX - ANINT( RX / box_length(1) ) * box_length(1)
-                RY = RY - ANINT( RY / box_length(2) ) * box_length(2)
-                RZ = RZ - ANINT( RZ / box_length(3) ) * box_length(3)
-            endif
+            RX_PBC = RX(I) - ANINT( RX(I) / box(1) ) * box(1)
+            RY_PBC = RY(I) - ANINT( RY(I) / box(2) ) * box(2)
+            RZ_PBC = RZ(I) - ANINT( RZ(I) / box(3) ) * box(3)
+
+            RX(I) = MERGE( RX_PBC, RX(I), periodic )
+            RY(I) = MERGE( RY_PBC, RY(I), periodic )
+            RZ(I) = MERGE( RZ_PBC, RZ(I), periodic )
 
             QW_New = QW(I); QX_New = QX(I)
             QY_New = QY(I); QZ_New = QZ(I)
@@ -352,9 +603,9 @@ module langevin_integrator
             
             enddo
 
-            LX_body = kk2 * kk1 * LX_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Ixx(I) ) * noise2(1)
-            LY_body = kk2 * kk1 * LY_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Iyy(I) ) * noise2(2)
-            LZ_body = kk2 * kk1 * LZ_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Izz(I) ) * noise2(3)
+            LX_body = kk2 * kk1 * LX_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Ixx(I) ) * noise_2x
+            LY_body = kk2 * kk1 * LY_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Iyy(I) ) * noise_2y
+            LZ_body = kk2 * kk1 * LZ_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Izz(I) ) * noise_2z
 
             LX(I) = ( RM(1,1) * LX_body + RM(2,1) * LY_body + RM(3,1) * LZ_body )
             LY(I) = ( RM(1,2) * LX_body + RM(2,2) * LY_body + RM(3,2) * LZ_body )
@@ -379,13 +630,16 @@ module langevin_integrator
         implicit none
         real(real64), optional, intent(in)   :: damping
         real(real64), intent(in)             :: DT
-        integer                         :: I
+        integer                              :: I
 
         if (present(damping)) then
             damp = damping
         else
             damp = 1.0
         endif
+
+        kin_eng = 0.0
+        kin_rot = 0.0
 
         do I = 1, N
 
@@ -411,85 +665,30 @@ module langevin_integrator
             LY_body = ( RM(2,1) * LX(I) + RM(2,2) * LY(I) + RM(2,3) * LZ(I) )
             LZ_body = ( RM(3,1) * LX(I) + RM(3,2) * LY(I) + RM(3,3) * LZ(I) )
 
-            kinetic_energy = kinetic_energy + 0.5 * ( ( LX_body ** 2.0) * Ixx_inv(I) + &
-                                                      ( LY_body ** 2.0) * Iyy_inv(I) + &
-                                                      ( LZ_body ** 2.0) * Izz_inv(I) )
+            kin_eng = kin_eng + 0.5 * mass(I) * ( VX(I) * VX(I) + VY(I) * VY(I) + VZ(I) * VZ(I) )
+
+            kin_rot = kin_rot + 0.5 * ( ( LX_body ** 2.0) * Ixx_inv(I) + &
+                                        ( LY_body ** 2.0) * Iyy_inv(I) + &
+                                        ( LZ_body ** 2.0) * Izz_inv(I) )
 
         enddo
 
     end subroutine lgv_final_step
 
-end module langevin_integrator
-
-module verlet_constraint_integrator
-    use system
-    use constraints
-    implicit none
-
-    contains
-    subroutine vvc_initial_step( DT )
-        implicit none
-        real(real64), intent(in) :: DT
-
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
-
-        RX_old = RX
-        RY_old = RY
-        RZ_old = RZ
-
-        RX = RX + DT * VX
-        RY = RY + DT * VY
-        RZ = RZ + DT * VZ
-
-        if (is_periodic) then
-            RX = RX - ANINT( RX / box_length(1) ) * box_length(1)
-            RY = RY - ANINT( RY / box_length(2) ) * box_length(2)
-            RZ = RZ - ANINT( RZ / box_length(3) ) * box_length(3)
-        endif
-
-        call apply_constraints_a( DT )
-
-    end subroutine vvc_initial_step
-
-    subroutine vvc_final_step( DT )
-        implicit none
-        real(real64), intent(in) :: DT
-
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
-
-        call apply_constraints_b( DT )
-
-    end subroutine vvc_final_step
-
-end module verlet_constraint_integrator
-
-module langevin_constraint_integrator
-    use system
-    use constraints
-    implicit none
-    real(real64), dimension(3, 3), private   :: RM
-    real(real64), dimension(3)               :: noise1, noise2
-    real(real64), private                    :: QDW, QDX, QDY, QDZ
-    real(real64), private                    :: LX_body, LY_body, LZ_body
-    real(real64), private                    :: WX_body, WY_body, WZ_body
-    real(real64)                             :: kk1, kk2, damp = 1.0
-    
-    contains
-    subroutine lgvc_initial_step( DT, damping )
+    subroutine lgvc_initial_step( DT, step, damping )
         implicit none
         real(real64), optional, intent(in)   :: damping
         real(real64), intent(in)             :: DT
-        real(real64)                         :: QW_Old, QX_Old, QY_Old, QZ_Old
-        real(real64)                         :: QW_New, QX_New, QY_New, QZ_New
-        real(real64)                         :: Q_mag
-        integer                              :: I, J
+        integer, intent(in)                  :: step
 
-        if (target_temp_set == .FALSE.) then
-            write(*, "(1x, 'Error: Target temperature not set.')")
+        real(real64)    :: RX_PBC, RY_PBC, RZ_PBC
+        real(real64)    :: QW_Old, QX_Old, QY_Old, QZ_Old
+        real(real64)    :: QW_New, QX_New, QY_New, QZ_New
+        real(real64)    :: Q_mag
+        integer         :: I, J, temp_int
+
+        if (target_temp .le. 1e-3) then
+            write(*, "(1x, 'Error: Target temperature too small.')")
             stop
         endif
 
@@ -501,6 +700,9 @@ module langevin_constraint_integrator
 
         kk1 = 1.0 - (damp * DT) / 2.0
         kk2 = 1.0 / (1.0 + (damp * DT) / 2.0)
+        temp_int = int( target_temp * 1000.0 )
+        noise_1x = 0.0; noise_1y = 0.0; noise_1z = 0.0
+        noise_2x = 0.0; noise_2y = 0.0; noise_2z = 0.0
 
         do I = 1, N
 
@@ -516,21 +718,24 @@ module langevin_constraint_integrator
             RY(I) = RY(I) + 0.5 * DT * VY(I)
             RZ(I) = RZ(I) + 0.5 * DT * VZ(I)
 
-            call normal_sequences( 3, noise1, noise2 )
+            call philox_normal_3seq( I, step, temp_int, 0, noise_1x, noise_1y, noise_1z )
+            call philox_normal_3seq( I, step, temp_int, 1, noise_2x, noise_2y, noise_2z )
 
-            VX(I) = EXP( -damp * DT ) * VX(I) + sqrt( target_temp * ( 1 - EXP( -2.0 * damp * DT ))) * noise1(1)
-            VY(I) = EXP( -damp * DT ) * VY(I) + sqrt( target_temp * ( 1 - EXP( -2.0 * damp * DT ))) * noise1(2)
-            VZ(I) = EXP( -damp * DT ) * VZ(I) + sqrt( target_temp * ( 1 - EXP( -2.0 * damp * DT ))) * noise1(3)
+            VX(I) = EXP( -damp * DT ) * VX(I) + sqrt( target_temp * inv_mass(I) * ( 1 - EXP( -2.0 * damp * DT ))) * noise_1x
+            VY(I) = EXP( -damp * DT ) * VY(I) + sqrt( target_temp * inv_mass(I) * ( 1 - EXP( -2.0 * damp * DT ))) * noise_1y
+            VZ(I) = EXP( -damp * DT ) * VZ(I) + sqrt( target_temp * inv_mass(I) * ( 1 - EXP( -2.0 * damp * DT ))) * noise_1z
 
             RX(I) = RX(I) + 0.5 * DT * VX(I)
             RY(I) = RY(I) + 0.5 * DT * VY(I)
             RZ(I) = RZ(I) + 0.5 * DT * VZ(I)
 
-            if (is_periodic) then
-                RX = RX - ANINT( RX / box_length(1) ) * box_length(1)
-                RY = RY - ANINT( RY / box_length(2) ) * box_length(2)
-                RZ = RZ - ANINT( RZ / box_length(3) ) * box_length(3)
-            endif
+            RX_PBC = RX(I) - ANINT( RX(I) / box(1) ) * box(1)
+            RY_PBC = RY(I) - ANINT( RY(I) / box(2) ) * box(2)
+            RZ_PBC = RZ(I) - ANINT( RZ(I) / box(3) ) * box(3)
+
+            RX(I) = MERGE( RX_PBC, RX(I), periodic )
+            RY(I) = MERGE( RY_PBC, RY(I), periodic )
+            RZ(I) = MERGE( RZ_PBC, RZ(I), periodic )
 
             QW_New = QW(I); QX_New = QX(I)
             QY_New = QY(I); QZ_New = QZ(I)
@@ -573,9 +778,9 @@ module langevin_constraint_integrator
             
             enddo
 
-            LX_body = kk2 * kk1 * LX_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Ixx(I) ) * noise2(1)
-            LY_body = kk2 * kk1 * LY_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Iyy(I) ) * noise2(2)
-            LZ_body = kk2 * kk1 * LZ_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Izz(I) ) * noise2(3)
+            LX_body = kk2 * kk1 * LX_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Ixx(I) ) * noise_2x
+            LY_body = kk2 * kk1 * LY_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Iyy(I) ) * noise_2y
+            LZ_body = kk2 * kk1 * LZ_body + kk2 * sqrt( 2.0 * damp * target_temp * DT * Izz(I) ) * noise_2z
 
             LX(I) = ( RM(1,1) * LX_body + RM(2,1) * LY_body + RM(3,1) * LZ_body )
             LY(I) = ( RM(1,2) * LX_body + RM(2,2) * LY_body + RM(3,2) * LZ_body )
@@ -602,13 +807,16 @@ module langevin_constraint_integrator
         implicit none
         real(real64), optional, intent(in) :: damping
         real(real64), intent(in)           :: DT
-        integer                       :: I
+        integer                            :: I
 
         if (present(damping)) then
             damp = damping
         else
             damp = 1.0
         endif
+
+        kin_eng = 0.0
+        kin_rot = 0.0
 
         do I = 1, N
 
@@ -634,9 +842,11 @@ module langevin_constraint_integrator
             LY_body = ( RM(2,1) * LX(I) + RM(2,2) * LY(I) + RM(2,3) * LZ(I) )
             LZ_body = ( RM(3,1) * LX(I) + RM(3,2) * LY(I) + RM(3,3) * LZ(I) )
 
-            kinetic_energy = kinetic_energy + 0.5 * ( ( LX_body ** 2.0) * Ixx_inv(I) + &
-                                                      ( LY_body ** 2.0) * Iyy_inv(I) + &
-                                                      ( LZ_body ** 2.0) * Izz_inv(I) )
+            kin_eng = kin_eng + 0.5 * mass(I) * ( VX(I) * VX(I) + VY(I) * VY(I) + VZ(I) * VZ(I) )
+
+            kin_rot = kin_rot + 0.5 * ( ( LX_body ** 2.0) * Ixx_inv(I) + &
+                                        ( LY_body ** 2.0) * Iyy_inv(I) + &
+                                        ( LZ_body ** 2.0) * Izz_inv(I) )
 
         enddo
 
@@ -644,125 +854,7 @@ module langevin_constraint_integrator
 
     end subroutine lgvc_final_step
 
-end module langevin_constraint_integrator
-
-module nose_hoover_constraint_integrator
-    use system
-    use constraints
-    implicit none
-
-    integer, parameter       :: N_th = 2
-    real(real64)                  :: tau = 5.0
-    real(real64), dimension(N_th) :: HB = 1.0, eta = 0.0, p_eta = 0.0
-
-    contains
-    subroutine u4_propagator ( t, j_start, j_stop, j_stride )
-        implicit none
-        real(real64), intent(in) :: t               
-        integer, intent(in) :: j_start, j_stop
-
-        integer :: j, j_stride
-        real(real64) :: gj, x, c
-
-        do j = j_start, j_stop, j_stride
-
-            if ( j == 1 ) then
-                gj = SUM(VX**2 + VY**2 + VZ**2) - (dof-3*N) * target_temp
-            else
-                gj = ( p_eta(j-1)**2 / HB(j-1) ) - target_temp
-            endif
-
-            if ( j == N_th ) then
-                p_eta(j)  = p_eta(j) + t * gj
-            else
-                x = t * p_eta(j+1)/HB(j+1)
-                c = exprel(-x) ! (1-exp(-x))/x, preserving accuracy for small x
-
-                p_eta(j) = p_eta(j)*EXP(-x) + t * gj * c
-            endif
-
-        enddo
-
-    end subroutine u4_propagator
-
-    subroutine nhtc_initial_step( DT, coupling )
-        implicit none
-        real(real64), intent(in) :: DT
-        real(real64), optional, intent(in) :: coupling
-
-        if (target_temp_set == .FALSE.) then
-            write(*, "(1x, 'Error: Target temperature not set.')")
-            stop
-        endif
-
-        if (present(coupling)) then
-            HB = coupling
-        else
-            HB = 1.0
-        endif
-
-        call u4_propagator( DT / 4.0, N_th, 1, -1)
-
-        VX = VX * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VY = VY * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VZ = VZ * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-
-        eta = eta + 0.5 * DT * p_eta / HB
-
-        CALL u4_propagator( DT / 4.0, 1, N_th, 1)
-
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
-
-        RX_old = RX
-        RY_old = RY
-        RZ_old = RZ
-
-        RX = RX + DT * VX
-        RY = RY + DT * VY
-        RZ = RZ + DT * VZ
-
-        if (is_periodic) then
-            RX = RX - ANINT( RX / box_length(1) ) * box_length(1)
-            RY = RY - ANINT( RY / box_length(2) ) * box_length(2)
-            RZ = RZ - ANINT( RZ / box_length(3) ) * box_length(3)
-        endif
-
-        call apply_constraints_a( DT )
-
-    end subroutine nhtc_initial_step
-
-    subroutine nhtc_final_step( DT, coupling )
-        implicit none
-        real(real64), intent(in) :: DT
-        real(real64), optional, intent(in) :: coupling
-
-        if (present(coupling)) then
-            HB = coupling
-        else
-            HB = 1.0
-        endif
-
-        VX = VX + 0.5 * DT * ( FX * inv_mass )
-        VY = VY + 0.5 * DT * ( FY * inv_mass )
-        VZ = VZ + 0.5 * DT * ( FZ * inv_mass )
-
-        call u4_propagator( DT / 4.0, N_th, 1, -1)
-
-        VX = VX * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VY = VY * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-        VZ = VZ * EXP( -0.5 * DT * p_eta(1) / HB(1) )
-
-        eta = eta + 0.5 * DT * p_eta / HB
-
-        CALL u4_propagator( DT / 4.0, 1, N_th, 1)
-
-        call apply_constraints_b( DT )
-
-    end subroutine nhtc_final_step
-
-end module nose_hoover_constraint_integrator
+end module langevin
 
 module monte_carlo_barostat
     use system
@@ -775,19 +867,18 @@ module monte_carlo_barostat
         real(real64) :: U_old, U_new, dU
         real(real64) :: Lx_old, Ly_old, Lz_old
         real(real64) :: exponent, rand_u, beta
-        real(real64) :: r1, r2
         real(real64) :: max_dV
         real(real64), optional, intent(in) :: volume_change
         logical, intent(out) :: accept
 
-        interface 
-            real(real64) function compute_potential()
-            import real64
+        interface
+        real(real64) function compute_potential()
+            import real64 
             end function compute_potential
         end interface
         
-        if (target_pres_set == .FALSE.) then
-            write(*, "(1x, 'Error: Target pressure not set.')")
+        if (target_pres .le. 1e-3) then
+            write(*, "(1x, 'Error: Target pressure too small.')")
             stop
         endif
 
@@ -797,12 +888,12 @@ module monte_carlo_barostat
             max_dV = 0.01
         endif
 
-        beta = 1.0d0 / temperature
+        beta = 1.0d0 / temp
 
-        V_old  = product( box_length )
-        Lx_old = box_length(1)
-        Ly_old = box_length(2)
-        Lz_old = box_length(3)
+        V_old  = product( box )
+        Lx_old = box(1)
+        Ly_old = box(2)
+        Lz_old = box(3)
 
         RX_old = RX
         RY_old = RY
@@ -819,9 +910,9 @@ module monte_carlo_barostat
 
         scale = (V_new / V_old)**(1.0d0 / 3.0d0)
         
-        box_length(1) = Lx_old * scale
-        box_length(2) = Ly_old * scale
-        box_length(3) = Lz_old * scale
+        box(1) = Lx_old * scale
+        box(2) = Ly_old * scale
+        box(3) = Lz_old * scale
 
         RX = RX_old * scale
         RY = RY_old * scale
@@ -835,13 +926,13 @@ module monte_carlo_barostat
         call random_number(rand_u)
         if (log(rand_u) < exponent) then
             accept = .true.
-            volume = product( box_length )
+            volume = product( box )
             density = dble(N) / volume
         else
 
-            box_length(1) = Lx_old
-            box_length(2) = Ly_old
-            box_length(3) = Lz_old
+            box(1) = Lx_old
+            box(2) = Ly_old
+            box(3) = Lz_old
 
             RX = RX_old
             RY = RY_old

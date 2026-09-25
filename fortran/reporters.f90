@@ -6,7 +6,7 @@ module state_data_reporter
     contains
     subroutine open_state_data_file( unit, filename )
         implicit none
-        integer, intent(in) :: unit
+        integer, intent(in)          :: unit
         character(len=*), intent(in) :: filename
 
         file = filename
@@ -20,9 +20,18 @@ module state_data_reporter
     subroutine report_state_data( unit, step )
         implicit none
         integer, intent(in) :: unit, step
+        real(real64)        :: kin_tot, tot_eng
+        real(real64)        :: pot_av, kin_av, rot_av
 
-        write(unit, "(I5, 100(F0.10, 2x))") &
-        step, potential_energy, kinetic_energy, total_energy, temperature, pressure, density
+        pot_av = pot_eng / dble( N )
+        kin_av = kin_eng / dble( N )
+        rot_av = kin_rot / dble( N )
+        
+        kin_tot = kin_av + rot_av
+        tot_eng = pot_av + kin_tot
+
+        write(unit, "((I0, 2x), 100(F0.10, 2x))") &
+        step, pot_av, kin_tot, tot_eng, temp, pressure, density
     
     end subroutine report_state_data
 
@@ -44,7 +53,7 @@ module trajectory_reporter
     contains
     subroutine open_trajectory_file( unit, filename )
         implicit none
-        integer, intent(in) :: unit
+        integer, intent(in)          :: unit
         character(len=*), intent(in) :: filename
 
         file = filename
@@ -56,20 +65,26 @@ module trajectory_reporter
     subroutine report_trajectory( unit, step )
         implicit none
         integer, intent(in) :: unit, step
-        integer :: I
+        real(real64)        :: UX, UY, UZ
+        integer             :: I
 
         write(unit, '(A)') "ITEM: TIMESTEP"
         write(unit, *) step
         write(unit, '(A)') "ITEM: NUMBER OF ATOMS"
         write(unit, *) n
         write(unit, "(A)") "ITEM: BOX BOUNDS pp pp pp"
-        write(unit, "(1x, 2(F0.3, 2x))") -box_length(1) / 2.0, box_length(1) / 2.0
-        write(unit, "(1x, 2(F0.3, 2x))") -box_length(2) / 2.0, box_length(2) / 2.0
-        write(unit, "(1x, 2(F0.3, 2x))") -box_length(3) / 2.0, box_length(3) / 2.0
+        write(unit, "(1x, 2(F0.3, 2x))") -box(1) / 2.0, box(1) / 2.0
+        write(unit, "(1x, 2(F0.3, 2x))") -box(2) / 2.0, box(2) / 2.0
+        write(unit, "(1x, 2(F0.3, 2x))") -box(3) / 2.0, box(3) / 2.0
         write(unit, "(A)") "ITEM: ATOMS id type shapex shapey shapez x y z vx vy vz fx fy fz quatw quati quatj quatk"
 
         do I = 1, N
-            write(unit, "(1x, 2(I0, 2x), 50(F0.3, 2x))") I, rtype(I), shape_x(I), shape_y(I), shape_z(I), RX(I), RY(I), RZ(I), VX(I), VY(I), VZ(I), FX(I), FY(I), FZ(I), &
+
+            UX = 2.0 *  ( QX(I) * QZ(I) + QW(I) * QY(I) )
+            UY = 2.0 *  ( QY(I) * QZ(I) - QW(I) * QX(I) )
+            UZ = QW(I)**2 - QX(I)**2 - QY(I)**2 + QZ(I)**2
+
+            write(unit, "(1x, 2(I0, 2x), 50(F0.3, 2x))") I, rtype(I), sig_x(I), sig_y(I), sig_z(I), RX(I), RY(I), RZ(I), UX, UY, UZ, FX(I), FY(I), FZ(I), &
             QW(I), QX(I), QY(I), QZ(I)
         enddo
 
@@ -127,7 +142,7 @@ module checkpoint_reporter
     use system
     implicit none
     character(len=256) :: file
-    integer :: config_index = 0
+    integer            :: config_index = 0
 
     contains
     subroutine open_checkpoint_file( unit, filename )
@@ -151,19 +166,19 @@ module checkpoint_reporter
         write(unit, *)
         write(unit, "('BONDS ', I0)") NC
         write(unit, *)
-        write(unit, "('BOX ', 3(F0.3, 2x))") box_length(1), box_length(2), box_length(3)
+        write(unit, "('BOX ', 3(F0.10, 2x))") box(1), box(2), box(3)
         write(unit, *)
-        write(unit, "('ATOM: ID TYPE MASS CHARGE SHAPEX SHAPEY SHAPEZ ESHAPEX ESHAPEY ESHAPEZ RX RY RZ VX VY VZ LX LY LZ QW QX QY QZ')")
+        write(unit, "('ATOM: ID TYPE MASS CHARGE SHAPEX SHAPEY SHAPEZ ESHAPEX ESHAPEY ESHAPEZ IXX IYY IZZ RX RY RZ VX VY VZ LX LY LZ QW QX QY QZ')")
         write(unit, *)
         do I = 1, N
-            write(unit, "(1x, 2(I0, 2x), 50(F0.3, 2x))") I, rtype(I), mass(I), charge(I), shape_x(I), shape_y(I), shape_z(I), eshape_x(I), eshape_y(I), eshape_z(I), &
-                                          RX(I), RY(I), RZ(I), VX(I), VY(I), VZ(I), LX(I), LY(I), LZ(I), QW(I), QX(I), QY(I), QZ(I)
+            write(unit, "(1x, 2(I0, 2x), 50(F0.10, 2x))") I, rtype(I), mass(I), charge(I), sig_x(I), sig_y(I), sig_z(I), eps_x(I), eps_y(I), eps_z(I), &
+                                          Ixx(I), Iyy(I), Izz(I), RX(I), RY(I), RZ(I), VX(I), VY(I), VZ(I), LX(I), LY(I), LZ(I), QW(I), QX(I), QY(I), QZ(I)
         enddo
         write(unit, *)
         write(unit, "('BOND: ID I J LEN')")
         write(unit, *)
         do I = 1, NC
-            write(unit, "(1x, 3(I0, 2x), 50(F0.3, 2x))") I, BBI(I), BBJ(I), BB_len(I)
+            write(unit, "(1x, 3(I0, 2x), 50(F0.10, 2x))") I, BBI(I), BBJ(I), BB_len(I)
         enddo
         write(unit, *)
         write(unit, *) config_index
@@ -173,9 +188,9 @@ module checkpoint_reporter
     subroutine load_checkpoint( unit )
         implicit none
         integer, intent(in) :: unit
-        integer :: I, J, na, nb, ia, ja
-        real(real64) :: la, bx, by, bz, ma
-        character(len=256) :: label
+        integer             :: I, J, na, nb, ia, ja
+        real(real64)        :: la, bx, by, bz, ma
+        character(len=256)  :: label
 
         read(unit, *) label, na
         call set_num_atoms(na)
@@ -189,8 +204,8 @@ module checkpoint_reporter
         read(unit, *) label
         read(unit, *)
         do I = 1, N
-            read(unit, *) J, rtype(I), ma, charge(I), shape_x(I), shape_y(I), shape_z(I), eshape_x(I), eshape_y(I), eshape_z(I), &                  
-                                          RX(I), RY(I), RZ(I), VX(I), VY(I), VZ(I), LX(I), LY(I), LZ(I), QW(I), QX(I), QY(I), QZ(I)
+            read(unit, *) J, rtype(I), ma, charge(I), sig_x(I), sig_y(I), sig_z(I), eps_x(I), eps_y(I), eps_z(I), &                  
+                            Ixx(I), Iyy(I), Izz(I), RX(I), RY(I), RZ(I), VX(I), VY(I), VZ(I), LX(I), LY(I), LZ(I), QW(I), QX(I), QY(I), QZ(I)
             call set_atom_mass(J, ma)
         enddo
         read(unit, *)
@@ -202,10 +217,6 @@ module checkpoint_reporter
         enddo
         read(unit, *)
         read(unit, *) config_index
-
-        default_shape_set = .FALSE.
-        default_energy_set = .FALSE.
-        box_lengths_set = .TRUE.
         
     end subroutine load_checkpoint
 

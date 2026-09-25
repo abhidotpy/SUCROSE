@@ -1,106 +1,123 @@
-module lcg_random
+module philox_rng
+    use iso_fortran_env, only: int32, int64, real64
     implicit none
-    integer, parameter :: i64 = selected_int_kind(18)
-    integer(8), parameter, private :: a = 1103515245
-    integer(8), parameter, private :: b = 214013
-    integer(8), parameter, private :: c = 2147483648_i64
 
-    real, parameter, private :: A1 = 3.949846138
-    real, parameter, private :: A3 = 0.252408784
-    real, parameter, private :: A5 = 0.076542912
-    real, parameter, private :: A7 = 0.008355968
-    real, parameter, private :: A9 = 0.029899776
+    integer(int32), parameter :: PHILOX_M0 = int(z'D2511F53', int32)
+    integer(int32), parameter :: PHILOX_M1 = int(z'CD9E8D57', int32)
+    integer(int32), parameter :: PHILOX_W0 = int(z'9E3779B9', int32) ! Weyl constant 1
+    integer(int32), parameter :: PHILOX_W1 = int(z'BB67AE85', int32) ! Weyl constant 2
 
-    integer, save :: seed
+    integer(int32), parameter :: PHILOX_KEY0 = int(z'6D2B79F5', int32)  ! Randomly chosen by ChatGPT
+    integer(int32), parameter :: PHILOX_KEY1 = int(z'1B873593', int32)  ! Randomly chosen by ChatGPT
 
     contains
-    subroutine init_rand()
+    pure subroutine mulhilo32( a, b, hi, lo )
         implicit none
+        integer(int32), intent(in)  :: a, b
+        integer(int32), intent(out) :: hi, lo
+        integer(int64)              :: aa, bb, prod
 
-        real :: sead
-        call random_seed()
-        call random_number(sead)
-        seed = int(sead * 1E+5)
+        aa = iand( int(a, int64), int(z'FFFFFFFF', int64) )
+        bb = iand( int(b, int64), int(z'FFFFFFFF', int64) )
+        prod = aa * bb
 
-    end subroutine init_rand
+        lo = int( iand( prod, int(z'FFFFFFFF', int64) ), int32 )
+        hi = int( iand( ishft(prod, -32), int(z'FFFFFFFF', int64) ), int32 )
+    end subroutine mulhilo32
 
-    subroutine rand_lcg(p)
+    pure function philox_real( word ) result(u)
         implicit none
-        real, intent(out):: p
+        integer(int32), intent(in) :: word
+        real(real64)               :: u
+        integer(int64)             :: uw
 
-        p = mod(a * seed + b, c)
-        seed = p
-        p = p / c
-    end subroutine rand_lcg
+        uw = iand( int(word, int64), int(z'FFFFFFFF', int64) )
+        u = real(uw, real64) * ( 1.0_real64 / 4294967296.0_real64 )  ! / 2^32
+    end function philox_real
 
-    subroutine rand_array(arr, size)
+    ! --- core Philox4x32, 10 rounds ---
+    ! ctr(4): 128-bit counter as four 32-bit words (ctr0..ctr3)
+    ! key(2): 64-bit key as two 32-bit words (key0, key1)
+    ! out(4): the four 32-bit pseudorandom outputs
+    pure subroutine philox_uniform( ctr, out )
         implicit none
-        integer, intent(in) :: size
-        real, dimension(size), intent(out) :: arr
-        integer :: loop
+        integer(int32), intent(in)  :: ctr(4)
+        real(real64),   intent(out) :: out(4)
 
-        do loop = 1, size
-            call rand_lcg(arr(loop))
-        enddo
-    end subroutine rand_array
+        integer(int32) :: c0, c1, c2, c3
+        integer(int32) :: k0, k1
+        integer(int32) :: hi0, lo0, hi1, lo1
+        integer        :: round
 
-    subroutine randrange_lcg(out, lower, upper)
-        implicit none
-        real, intent(in) :: lower, upper
-        real, intent(out) :: out
-        real :: yy
+        c0 = ctr(1); c1 = ctr(2); c2 = ctr(3); c3 = ctr(4)
+        k0 = PHILOX_KEY0; k1 = PHILOX_KEY1
 
-        call rand_lcg(yy)
-        out = yy * (upper - lower) + lower
-    end subroutine randrange_lcg
+        do round = 1, 10
+            call mulhilo32( PHILOX_M0, c0, hi0, lo0 )
+            call mulhilo32( PHILOX_M1, c2, hi1, lo1 )
 
-    subroutine normal_lcg(out)
-        implicit none
-        real, intent(out) :: out
-        real :: sum_randnormal, dummy_randnormal, r_randnormal, r2_randnormal
-        integer :: i_rnc
+            c0 = ieor( hi1, ieor( c1, k0 ) )
+            c1 = lo1
+            c2 = ieor( hi0, ieor( c3, k1 ) )
+            c3 = lo0
 
-        sum_randnormal = 0.0
-
-        do i_rnc = 1, 12
-            call random_number(dummy_randnormal)
-            sum_randnormal = sum_randnormal + dummy_randnormal
-        enddo
-
-        r_randnormal  = ( sum_randnormal - 6.0 ) / 4.0
-        r2_randnormal = r_randnormal * r_randnormal
-
-        out = (((( A9 * r2_randnormal + A7 ) * r2_randnormal + A5 ) * r2_randnormal + A3 ) * r2_randnormal + A1 ) * r_randnormal
-
-    end subroutine normal_lcg
-
-    function normal_distribution( rand ) result(out)
-        implicit none
-        real, intent(in) :: rand
-        real :: out, saead
-        real :: sum_randnormal, dummy_randnormal, r_randnormal, r2_randnormal
-        integer :: i_rnc
-
-        sum_randnormal = 0.0
-
-        do i_rnc = 1, 12
-            call random_number(dummy_randnormal)
-            sum_randnormal = sum_randnormal + dummy_randnormal
+            ! Weyl sequence key bump (skip on final round, matches reference)
+            if (round < 10) then
+                k0 = k0 + PHILOX_W0
+                k1 = k1 + PHILOX_W1
+            endif
         enddo
 
-        r_randnormal  = ( sum_randnormal - 6.0 ) / 4.0
-        r2_randnormal = r_randnormal * r_randnormal
+        out(1) = philox_real( c0 )
+        out(2) = philox_real( c1 )
+        out(3) = philox_real( c2 )
+        out(4) = philox_real( c3 )
 
-        out = (((( A9 * r2_randnormal + A7 ) * r2_randnormal + A5 ) * r2_randnormal + A3 ) * r2_randnormal + A1 ) * r_randnormal
+    end subroutine philox_uniform
 
+    pure subroutine philox_normal_3seq( ctr1, ctr2, ctr3, ctr4, n1, n2, n3 )
+        implicit none
+        integer(int32), intent(in)  :: ctr1, ctr2, ctr3, ctr4
+        real(real64), intent(out)   :: n1, n2, n3
 
-    end function normal_distribution
-end module lcg_random
+        real(real64), parameter       :: TWOPI = 6.283185307179586
+        real(real64), parameter       :: TINY  = 1.0e-35
+        integer(int32)                :: ctr(4), key(2)
+        real(real64)                  :: out(4)
+        real(real64)                  :: u1, u2, u3, u4, n4
+        real(real64)                  :: r1, r2, th1, th2
+
+        ! counter uniquely identifies WHICH random draw this is —
+        ! no shared mutable state, fully deterministic given these 4 integers
+        ctr(1) = ctr1; ctr(2) = ctr2; ctr(3) = ctr3; ctr(4) = ctr4
+
+        call philox_uniform( ctr, out )
+        u1 = out(1); u2 = out(2); u3 = out(3); u4 = out(4)
+
+        u1 = max( u1, TINY )   ! guard log(0)
+        u3 = max( u3, TINY )   ! guard log(0)
+
+        ! Two Box-Muller transform for Gaussian variates
+        r1  = sqrt( -2.0 * log(u1) )
+        th1 = TWOPI * u2
+
+        r2  = sqrt( -2.0 * log(u3) )
+        th2 = TWOPI * u4
+
+        n1 = r1 * cos(th1)
+        n2 = r1 * sin(th1)
+
+        n3 = r2 * cos(th2)
+        n4 = r2 * sin(th2)
+
+    end subroutine philox_normal_3seq
+
+end module philox_rng
 
 module xmath
     use iso_fortran_env, only: real64
     implicit none
-    real, parameter :: pi = 3.1415926535897932384626433832795
+    real(real64), parameter :: pi = 3.1415926535897932384626433832795
 
     interface operator(.x.)
         module procedure vmdot
@@ -110,46 +127,10 @@ module xmath
 
     contains
 
-    pure function mag(v) result (out)
-        implicit none
-        real(real64), intent(in), dimension(3) :: v
-        real(real64) :: out
-
-        out = sqrt(sum(v**2))
-
-    end function mag
-
-    pure function mag2(v) result (out)
-        implicit none
-        real(real64), intent(in), dimension(3) :: v
-        real(real64) :: out
-
-        out = sum(v**2)
-
-    end function mag2
-
-    pure function normalize(v) result (out)
-        implicit none
-        real(real64), intent(in), dimension(3) :: v
-        real(real64), dimension(size(v)) :: out
-
-        out = v / mag(v)
-
-    end function normalize
-
-    pure function dot(v1, v2) result (out)
-        implicit none
-        real(real64), intent(in), dimension(3) :: v1, v2
-        real(real64) :: out
-
-        out = sum(v1 * v2)
-
-    end function
-
     pure function cross(a, b) result (out)
         implicit none
         real(real64), intent(in), dimension(3) :: a, b
-        real(real64), dimension(3) :: out
+        real(real64), dimension(3)             :: out
 
         out(1) = a(2)*b(3) - a(3)*b(2)
         out(2) = a(3)*b(1) - a(1)*b(3)
@@ -160,7 +141,7 @@ module xmath
     pure function determinant(M) result (out)
         implicit none
         real(real64), intent(in), dimension(3,3) :: M
-        real(real64) :: out
+        real(real64)                             :: out
 
         out = M(1, 1) * ( M(2, 2) * M(3, 3) - M(3, 2) * M(2, 3) ) &
             - M(1, 2) * ( M(2, 1) * M(3, 3) - M(3, 1) * M(2, 3) ) &
@@ -171,8 +152,8 @@ module xmath
     pure function inverse(M) result (out)
         implicit none
         real(real64), intent(in), dimension(3,3) :: M
-        real(real64), dimension(3,3) :: out
-        real(real64) :: det
+        real(real64), dimension(3,3)             :: out
+        real(real64)                             :: det
 
         out(1, 1) = M(2, 2) * M(3, 3) - M(3, 2) * M(2, 3)
         out(1, 2) = M(1, 3) * M(3, 2) - M(1, 2) * M(3, 3)
@@ -211,8 +192,8 @@ module xmath
     end function as_matrix
 
     pure function rotation_matrix( w, x, y, z ) result (rot_matrix)
-        real(real64), intent(in)   :: w, x, y, z
-        real, dimension(3, 3) :: rot_matrix
+        real(real64), intent(in)         :: w, x, y, z
+        real(real64), dimension(3, 3)    :: rot_matrix
 
         rot_matrix(1, 1) = w ** 2 + x ** 2 - y ** 2 - z ** 2
         rot_matrix(1, 2) = 2.0 * ( x * y + w * z )
@@ -229,7 +210,7 @@ module xmath
     pure function vvdot(a, b) result (out)
         implicit none
         real(real64), intent(in), dimension(3) :: a, b
-        real(real64) :: out
+        real(real64)                           :: out
 
         out = sum(a * b)
 
@@ -237,45 +218,90 @@ module xmath
 
     pure function vmdot(a, b) result (out)
         implicit none
-        real(real64), intent(in), dimension(3) :: a
+        real(real64), intent(in), dimension(3)    :: a
         real(real64), intent(in), dimension(3, 3) :: b
-        real(real64), dimension(3) :: out
+        real(real64), dimension(3)                :: out
 
-        out(1) = sum(a(:) * b(:, 1))
-        out(2) = sum(a(:) * b(:, 2))
-        out(3) = sum(a(:) * b(:, 3))
+        out(1) = a(1) * b(1, 1) + a(2) * b(2, 1) + a(3) * b(3, 1)
+        out(2) = a(1) * b(1, 2) + a(2) * b(2, 2) + a(3) * b(3, 2)
+        out(3) = a(1) * b(1, 3) + a(2) * b(2, 3) + a(3) * b(3, 3)
 
     end function vmdot
 
     pure function mvdot(a, b) result (out)
         implicit none
         real(real64), intent(in), dimension(3, 3) :: a
-        real(real64), intent(in), dimension(3) :: b
-        real(real64), dimension(3) :: out
+        real(real64), intent(in), dimension(3)    :: b
+        real(real64), dimension(3)                :: out
 
-        out(1) = sum(a(1, :) * b(:))
-        out(2) = sum(a(2, :) * b(:))
-        out(3) = sum(a(3, :) * b(:))
+        out(1) = a(1, 1) * b(1) + a(1, 2) * b(2) + a(1, 3) * b(3)
+        out(2) = a(2, 1) * b(1) + a(2, 2) * b(2) + a(2, 3) * b(3)
+        out(3) = a(3, 1) * b(1) + a(3, 2) * b(2) + a(3, 3) * b(3)
+
     end function mvdot
 
     pure function mmdot(a, b) result (out)
         implicit none
         real(real64), intent(in), dimension(3, 3) :: a, b
-        real(real64), dimension(3, 3) :: out
+        real(real64), dimension(3, 3)             :: out
 
-        out(1, 1) = sum(a(1, :) * b(:, 1))
-        out(1, 2) = sum(a(1, :) * b(:, 2))
-        out(1, 3) = sum(a(1, :) * b(:, 3))
+        out(1, 1) = a(1, 1) * b(1, 1) + a(1, 2) * b(2, 1) + a(1, 3) * b(3, 1)
+        out(1, 2) = a(1, 1) * b(1, 2) + a(1, 2) * b(2, 2) + a(1, 3) * b(3, 2)
+        out(1, 3) = a(1, 1) * b(1, 3) + a(1, 2) * b(2, 3) + a(1, 3) * b(3, 3)
 
-        out(2, 1) = sum(a(2, :) * b(:, 1))
-        out(2, 2) = sum(a(2, :) * b(:, 2))
-        out(2, 3) = sum(a(2, :) * b(:, 3))
+        out(2, 1) = a(2, 1) * b(1, 1) + a(2, 2) * b(2, 1) + a(2, 3) * b(3, 1)
+        out(2, 2) = a(2, 1) * b(1, 2) + a(2, 2) * b(2, 2) + a(2, 3) * b(3, 2)
+        out(2, 3) = a(2, 1) * b(1, 3) + a(2, 2) * b(2, 3) + a(2, 3) * b(3, 3)
 
-        out(3, 1) = sum(a(3, :) * b(:, 1))
-        out(3, 2) = sum(a(3, :) * b(:, 2))
-        out(3, 3) = sum(a(3, :) * b(:, 3))
+        out(3, 1) = a(3, 1) * b(1, 1) + a(3, 2) * b(2, 1) + a(3, 3) * b(3, 1)
+        out(3, 2) = a(3, 1) * b(1, 2) + a(3, 2) * b(2, 2) + a(3, 3) * b(3, 2)
+        out(3, 3) = a(3, 1) * b(1, 3) + a(3, 2) * b(2, 3) + a(3, 3) * b(3, 3)
 
     end function mmdot
+
+    pure function matmul_atba(a, b) result (out)
+        implicit none
+        real(real64), intent(in), dimension(3, 3) :: a, b
+        real(real64), dimension(3, 3)             :: out
+
+        out(1,1) =   A(1, 1) * B(1, 1) * A(1, 1)   +   A(2, 1) * B(2, 2) * A(2, 1)   +   A(3, 1) * B(3, 3) * A(3, 1)
+        out(1,2) =   A(1, 1) * B(1, 1) * A(1, 2)   +   A(2, 1) * B(2, 2) * A(2, 2)   +   A(3, 1) * B(3, 3) * A(3, 2)
+        out(1,3) =   A(1, 1) * B(1, 1) * A(1, 3)   +   A(2, 1) * B(2, 2) * A(2, 3)   +   A(3, 1) * B(3, 3) * A(3, 3)
+ 
+        out(2,1) =   out(1, 2)
+        out(2,2) =   A(1, 2) * B(1, 1) * A(1, 2)   +   A(2, 2) * B(2, 2) * A(2, 2)   +   A(3, 2) * B(3, 3) * A(3, 2)
+        out(2,3) =   A(1, 2) * B(1, 1) * A(1, 3)   +   A(2, 2) * B(2, 2) * A(2, 3)   +   A(3, 2) * B(3, 3) * A(3, 3) 
+
+        out(3,1) =   out(1, 3)
+        out(3,2) =   out(2, 3)
+        out(3,3) =   A(1, 3) * B(1, 1) * A(1, 3)   +   A(2, 3) * B(2, 2) * A(2, 3)   +   A(3, 3) * B(3, 3) * A(3, 3) 
+ 
+    end function matmul_atba
+
+    pure function cholesky_solve(A, b) result (out)
+        real(real64), intent(in)  :: A(3,3), b(3)
+        real(real64)              :: out(3)
+        real(real64)              :: inv_l11, inv_l22, inv_l33, l21, l31, l32
+        real(real64)              :: y1, y2, y3
+
+        inv_l11 = 1.0 / sqrt(A(1,1))
+        l21     = A(2,1) * inv_l11
+        l31     = A(3,1) * inv_l11
+
+        inv_l22 = 1.0 / sqrt(A(2,2) - l21 * l21)
+        l32     = (A(3,2) - l31 * l21) * inv_l22
+
+        inv_l33 = 1.0 / sqrt(A(3,3) - l31 * l31 - l32 * l32)
+
+        y1 = b(1) * inv_l11
+        y2 = (b(2) - l21 * y1) * inv_l22
+        y3 = (b(3) - l31 * y1 - l32 * y2) * inv_l33
+
+        out(3) = y3 * inv_l33
+        out(2) = (y2 - l32 * out(3)) * inv_l22
+        out(1) = (y1 - l21 * out(2) - l31 * out(3)) * inv_l11
+
+    end function cholesky_solve
 
     pure function quat_product(q1, q2) result (out)
         implicit none
@@ -289,103 +315,4 @@ module xmath
 
     end function quat_product
 
-    pure function degrees_to_radians(angle) result (out)
-        implicit none
-        real(real64), intent(in) :: angle
-        real(real64) :: out
-
-        out = angle * pi / 180.0
-
-    end function degrees_to_radians
-
-    pure function radians_to_degrees(angle) result (out)
-        implicit none
-        real(real64), intent(in) :: angle
-        real(real64) :: out
-
-        out = angle * 180.0 / pi
-
-    end function radians_to_degrees
-
-    subroutine normal_distribution( rand )
-        implicit none
-        real(real64), intent(out) :: rand
-        real(real64) :: sum_randnormal, dummy_randnormal, r_randnormal, r2_randnormal
-        integer :: i_rnc
-
-        real(real64), parameter :: A1 = 3.949846138
-        real(real64), parameter :: A3 = 0.252408784
-        real(real64), parameter :: A5 = 0.076542912
-        real(real64), parameter :: A7 = 0.008355968
-        real(real64), parameter :: A9 = 0.029899776
-
-        sum_randnormal = 0.0
-
-        do i_rnc = 1, 12
-            call random_number(dummy_randnormal)
-            sum_randnormal = sum_randnormal + dummy_randnormal
-        enddo
-
-        r_randnormal  = ( sum_randnormal - 6.0 ) / 4.0
-        r2_randnormal = r_randnormal * r_randnormal
-
-        rand = (((( A9 * r2_randnormal + A7 ) * r2_randnormal + A5 ) * r2_randnormal + A3 ) * r2_randnormal + A1 ) * r_randnormal
-
-    end subroutine normal_distribution
-
-    subroutine normal_sequences( num, noise1, noise2 )
-        implicit none
-        integer, intent(in) :: num
-        real(real64), dimension(num), intent(out) :: noise1, noise2
-        real(real64), dimension(num) :: unf_noise1, unf_noise2
-
-        call random_number(unf_noise1)
-        call random_number(unf_noise2)
-
-        noise1 = sqrt(-2.0 * log(unf_noise1)) * cos(2.0 * pi * unf_noise2)
-        noise2 = sqrt(-2.0 * log(unf_noise1)) * sin(2.0 * pi * unf_noise2)
-
-    end subroutine normal_sequences
-
-    PURE FUNCTION polyval ( x, c ) RESULT ( f )
-        IMPLICIT NONE
-        real(real64)                            :: f ! Returns polynomial in ...
-        real(real64),                INTENT(in) :: x ! argument
-        real(real64), DIMENSION(0:), INTENT(in) :: c ! given coefficients (ascending powers of x)
-
-        ! Uses Horner's rule
-        
-        INTEGER :: i, upper
-
-        upper = UBOUND(c,1)
-        f = c(upper)
-        DO i = upper - 1, 0, -1
-        f = f * x + c(i)
-        END DO
-    END FUNCTION polyval
-
-    PURE FUNCTION exprel ( x ) RESULT ( f )
-        IMPLICIT NONE
-        real(real64), INTENT(in) :: x ! Argument
-        real(real64)             :: f ! Returns value of (exp(x)-1)/x
-
-        ! At small x, we must guard against the ratio of imprecise small values.
-        ! There are various ways of doing this.
-        ! We follow some others and use the identity: (exp(x)-1)/x = exp(x/2)*[sinh(x/2)/(x/2)].
-        ! For small x, sinh(x)/x = g0 + g1*x**2 + g2*x**4 + ...
-        ! where the coefficient of x**(2n) is gn = 1/(2*n+1)!
-        ! Alternatively, the exprel function is available in some math and scientific libraries.
-
-        real(real64), DIMENSION(0:4), PARAMETER :: g = 1.0 / [1,6,120,5040,362880]
-        real(real64),                 PARAMETER :: tol = 0.01
-
-        IF ( ABS(x) > tol ) THEN
-        f = ( EXP(x) - 1.0 ) / x
-        ELSE
-        f = EXP(x/2) * polyval ( (x/2)**2, g )
-        END IF
-
-    END FUNCTION exprel
-
-
-end module
+end module xmath
